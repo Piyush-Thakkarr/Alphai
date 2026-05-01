@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 """
-Head-to-head benchmark of two volatility estimators on the same 720-bar
+Head-to-head benchmark of three predictors on the same 720-bar
 walk-forward backtest:
 
-    A) EWMA-smoothed Garman-Klass per-bar variance (what we ship)
-    B) GARCH(1,1) on log returns (the canonical alternative)
+    A) EWMA-GK + student-t  (what we ship)
+    B) EWMA-GK + FHS        (filtered historical simulation)
+    C) GARCH(1,1) + student-t
 
-Everything else is identical: student-t innovations, 10k MC, mu=0,
-500-bar rolling window, no peeking.
+A vs B isolates the innovation distribution (same volatility).
+A vs C isolates the volatility model (same innovations).
 
-Output: side-by-side coverage / mean width / mean winkler so we can
-defend the choice with numbers, not vibes.
+Same MC, same 500-bar window, mu=0, no peeking.
 """
 
 import numpy as np
@@ -21,7 +21,60 @@ from arch import arch_model
 
 from data import fetch_klines
 from model import predict_range as predict_ewma_gk
+from model import garman_klass_per_bar, EWMA_LAMBDA
 from backtest import winkler_score, WINDOW, TEST_BARS, WARMUP_BARS, ALPHA
+
+
+def predict_range_fhs(
+    ohlc: pd.DataFrame,
+    alpha: float = ALPHA,
+    n_sims: int = 10_000,
+    rng: np.random.Generator | None = None,
+) -> dict:
+    """
+    Same EWMA-GK volatility, but instead of student-t shocks, sample
+    standardized residuals from this window with replacement.
+
+    standardized residual at bar k = r_k / sigma_k
+    where sigma_k = EWMA-GK using data up to bar k-1.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    gk = garman_klass_per_bar(ohlc)
+    # ewm value at bar k uses GK up to and including bar k
+    ewm_series = gk.ewm(alpha=1.0 - EWMA_LAMBDA, adjust=False).mean()
+    # for predicting bar k, we use sigma based on GK up to k-1
+    sigma_at_each_bar = np.sqrt(ewm_series.shift(1))
+
+    log_ret = np.log(ohlc["close"] / ohlc["close"].shift(1))
+    standardized = (log_ret / sigma_at_each_bar).dropna().values
+
+    if len(standardized) < 30:
+        raise ValueError(f"FHS needs >=30 standardized residuals, got {len(standardized)}")
+
+    # sigma for predicting the NEXT bar (uses GK up to and incl. last input bar)
+    sigma_next = float(np.sqrt(ewm_series.iloc[-1]))
+
+    # bootstrap with replacement from the residual bag
+    z = rng.choice(standardized, size=n_sims, replace=True)
+    log_returns = -0.5 * sigma_next ** 2 + sigma_next * z
+
+    current_price = float(ohlc["close"].iloc[-1])
+    samples = current_price * np.exp(log_returns)
+
+    lo_q = 100.0 * (alpha / 2.0)
+    hi_q = 100.0 * (1.0 - alpha / 2.0)
+    low, high = np.percentile(samples, [lo_q, hi_q])
+
+    return {
+        "low": float(low),
+        "high": float(high),
+        "sigma": sigma_next,
+        "df_t": float("nan"),  # FHS has no df
+        "samples": samples,
+        "current_price": current_price,
+    }
 
 
 def predict_range_garch(
@@ -112,32 +165,28 @@ if __name__ == "__main__":
     ohlc = fetch_klines(limit=fetch_count)
     print(f"got {len(ohlc)} closed bars\n")
 
-    a = run(ohlc, predict_ewma_gk, "EWMA-GK")
-    b = run(ohlc, predict_range_garch, "GARCH(1,1)")
+    a = run(ohlc, predict_ewma_gk, "EWMA-GK + t")
+    b = run(ohlc, predict_range_fhs, "EWMA-GK + FHS")
+    c = run(ohlc, predict_range_garch, "GARCH + t")
 
-    print("\n" + "=" * 70)
-    print(f"{'metric':<22} {'EWMA-GK':>20} {'GARCH(1,1)':>20}")
-    print("-" * 70)
-    print(f"{'predictions':<22} {a['n']:>20} {b['n']:>20}")
-    print(f"{'coverage @ 95%':<22} {a['coverage']:>20.4f} {b['coverage']:>20.4f}")
-    print(f"{'mean width ($)':<22} {a['mean_width']:>20,.2f} {b['mean_width']:>20,.2f}")
-    print(f"{'median width ($)':<22} {a['median_width']:>20,.2f} {b['median_width']:>20,.2f}")
-    print(f"{'mean winkler':<22} {a['mean_winkler']:>20,.2f} {b['mean_winkler']:>20,.2f}")
-    print(f"{'median winkler':<22} {a['median_winkler']:>20,.2f} {b['median_winkler']:>20,.2f}")
-    print("=" * 70)
+    print("\n" + "=" * 80)
+    print(f"{'metric':<20} {'EWMA-GK + t':>18} {'EWMA-GK + FHS':>18} {'GARCH + t':>18}")
+    print("-" * 80)
+    print(f"{'predictions':<20} {a['n']:>18} {b['n']:>18} {c['n']:>18}")
+    print(f"{'coverage @ 95%':<20} {a['coverage']:>18.4f} {b['coverage']:>18.4f} {c['coverage']:>18.4f}")
+    print(f"{'mean width ($)':<20} {a['mean_width']:>18,.2f} {b['mean_width']:>18,.2f} {c['mean_width']:>18,.2f}")
+    print(f"{'median width ($)':<20} {a['median_width']:>18,.2f} {b['median_width']:>18,.2f} {c['median_width']:>18,.2f}")
+    print(f"{'mean winkler':<20} {a['mean_winkler']:>18,.2f} {b['mean_winkler']:>18,.2f} {c['mean_winkler']:>18,.2f}")
+    print(f"{'median winkler':<20} {a['median_winkler']:>18,.2f} {b['median_winkler']:>18,.2f} {c['median_winkler']:>18,.2f}")
+    print("=" * 80)
 
-    # Verdict
+    # closest-to-0.95 coverage
     print()
-    if abs(a["coverage"] - 0.95) < abs(b["coverage"] - 0.95):
-        print(f"-> EWMA-GK closer to 0.95 coverage by "
-              f"{abs(b['coverage']-0.95) - abs(a['coverage']-0.95):.4f}")
-    else:
-        print(f"-> GARCH closer to 0.95 coverage by "
-              f"{abs(a['coverage']-0.95) - abs(b['coverage']-0.95):.4f}")
+    by_cov = sorted([a, b, c], key=lambda r: abs(r["coverage"] - 0.95))
+    print(f"-> closest to 0.95 coverage: {by_cov[0]['label']} "
+          f"({by_cov[0]['coverage']:.4f})")
 
-    if a["mean_winkler"] < b["mean_winkler"]:
-        print(f"-> EWMA-GK has lower mean Winkler by "
-              f"{b['mean_winkler'] - a['mean_winkler']:,.2f}")
-    else:
-        print(f"-> GARCH has lower mean Winkler by "
-              f"{a['mean_winkler'] - b['mean_winkler']:,.2f}")
+    # lowest mean winkler
+    by_wink = sorted([a, b, c], key=lambda r: r["mean_winkler"])
+    print(f"-> lowest mean winkler:      {by_wink[0]['label']} "
+          f"({by_wink[0]['mean_winkler']:,.2f})")

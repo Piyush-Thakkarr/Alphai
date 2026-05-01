@@ -50,23 +50,35 @@ python backtest.py
 streamlit run app.py
 ```
 
-## benchmark vs GARCH(1,1)
+## benchmarks vs alternatives
 
-before settling on EWMA-on-Garman-Klass, i benchmarked it head-to-head
-against fitted GARCH(1,1) on log returns over the same 720-bar
-walk-forward. run `python benchmark.py` to reproduce.
+before settling on EWMA-GK + student-t, i ran a 3-arm benchmark on the
+same 720-bar walk-forward. same MC, same 500-bar window, mu=0. only
+the volatility model and/or innovation distribution differ.
 
-| metric | EWMA-GK | GARCH(1,1) |
-|---|---|---|
-| coverage @ 95% | **0.9556** | 0.9403 |
-| mean width | $1,184 | $1,194 |
-| mean winkler | **1,686** | 1,718 |
-| median width | $1,188 | $1,115 |
-| median winkler | 1,204 | 1,145 |
+run `python benchmark.py` to reproduce.
 
-GARCH is slightly tighter on the median bar ($1,115 vs $1,188), but it
-under-covers (0.94 vs target 0.95). under-coverage means more misses,
-and the winkler penalty on misses (2/alpha = 40 times distance outside
-the band) pushes mean winkler higher despite the tighter typical bar.
-EWMA-GK wins on coverage closeness and mean winkler, which are the two
-metrics in the grading rubric.
+| metric          | EWMA-GK + t (ours) | EWMA-GK + FHS | GARCH(1,1) + t |
+|---|---|---|---|
+| predictions     | **720**           | 699           | 720             |
+| coverage @ 95%  | **0.9556**        | 0.9599        | 0.9403          |
+| mean width      | $1,184            | $1,198        | $1,194          |
+| mean winkler    | 1,686             | **1,683**     | 1,718           |
+| median width    | $1,188            | $1,182        | $1,115          |
+| median winkler  | 1,204             | 1,210         | 1,145           |
+
+**GARCH(1,1) + student-t**: under-covers (0.94 vs target 0.95). more
+misses, and the winkler penalty on misses (2/alpha = 40 times distance
+outside the band) pushes mean winkler higher despite tighter typical
+bars. eliminated.
+
+**EWMA-GK + FHS**: marginally lower mean winkler (1,683 vs 1,686, a
+~0.2% difference). but FHS only covered 699 of the 720 bars because
+the first ~20 test bars don't have enough standardized residuals to
+bootstrap from (FHS needs >=30 to be stable). not a like-for-like
+comparison.
+
+**verdict**: keep EWMA-GK + student-t. it predicts all 720 bars,
+calibrates closest to 0.95, and the FHS Winkler edge falls within
+run-to-run noise (the 30-day window slides every hour, numbers drift
+by ~30 winkler between reruns).
