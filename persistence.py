@@ -1,28 +1,10 @@
 """
-SQLite persistence for the live dashboard (Part C).
+sqlite store for the dashboard's part C history.
 
-Goal: every visit saves the prediction it just made; over time the
-database grows into a record of predictions with their actuals filled
-in once the predicted hour has elapsed.
-
-Schema (single table, time keyed by Unix seconds for tz-safety):
-
-    predictions(
-        predicted_for_unix    INTEGER PRIMARY KEY,
-        prediction_made_unix  INTEGER NOT NULL,
-        last_close_unix       INTEGER NOT NULL,
-        current_price         REAL    NOT NULL,
-        low_95                REAL    NOT NULL,
-        high_95               REAL    NOT NULL,
-        sigma                 REAL,
-        df_t                  REAL,
-        actual_close          REAL,
-        in_range              INTEGER
-    )
-
-INSERT OR IGNORE on the primary key means: the FIRST prediction made
-for a given hour is the one we keep. Repeat visits in the same hour
-don't overwrite it - which is what you want for evaluation purity.
+every visit saves the prediction and back-fills actuals for any
+prediction whose target hour has now closed. INSERT OR IGNORE on
+predicted_for_unix means the FIRST prediction made for a given hour
+is the one we keep — repeat refreshes don't overwrite it.
 """
 
 from __future__ import annotations
@@ -62,14 +44,12 @@ def _conn():
 
 
 def _to_unix(ts: pd.Timestamp) -> int:
-    """pd.Timestamp -> Unix seconds (handles both tz-aware and naive)."""
     if ts.tzinfo is None:
         ts = ts.tz_localize("UTC")
     return int(ts.timestamp())
 
 
 def init_db() -> None:
-    """Create the predictions table if not present. Safe to call repeatedly."""
     with _conn() as c:
         c.executescript(SCHEMA)
 
@@ -80,10 +60,7 @@ def save_prediction(
     predicted_for_time: pd.Timestamp,
     made_at: pd.Timestamp,
 ) -> bool:
-    """
-    Persist one prediction. Returns True if newly inserted, False if a
-    prediction for this hour was already recorded (then it's skipped).
-    """
+    """Insert one prediction. Returns True if new, False if already there."""
     with _conn() as c:
         cur = c.execute(
             """
@@ -108,16 +85,13 @@ def save_prediction(
 
 def update_actuals(bars: pd.DataFrame) -> int:
     """
-    For any prediction whose target hour has elapsed, fill in the actual
-    close and the hit indicator from `bars`. Returns the number of rows
-    updated.
-
-    `bars` should be the current pull from Binance, indexed by close_time.
+    Fill actual_close + in_range for any past prediction whose target
+    hour has now closed. Looks up by unix timestamp so timezones don't
+    bite us.
     """
     if bars.empty:
         return 0
 
-    # Build a map: unix -> close, for fast lookup
     bars = bars.copy()
     bars["unix"] = bars.index.map(_to_unix)
     close_by_unix = dict(zip(bars["unix"], bars["close"]))
@@ -125,11 +99,8 @@ def update_actuals(bars: pd.DataFrame) -> int:
     updated = 0
     with _conn() as c:
         rows = c.execute(
-            """
-            SELECT predicted_for_unix, low_95, high_95
-            FROM predictions
-            WHERE actual_close IS NULL
-            """
+            "SELECT predicted_for_unix, low_95, high_95 "
+            "FROM predictions WHERE actual_close IS NULL"
         ).fetchall()
 
         for predicted_for_unix, low, high in rows:
@@ -138,11 +109,8 @@ def update_actuals(bars: pd.DataFrame) -> int:
                 continue
             in_range = int(low <= actual <= high)
             c.execute(
-                """
-                UPDATE predictions
-                SET actual_close = ?, in_range = ?
-                WHERE predicted_for_unix = ?
-                """,
+                "UPDATE predictions SET actual_close = ?, in_range = ? "
+                "WHERE predicted_for_unix = ?",
                 (float(actual), in_range, int(predicted_for_unix)),
             )
             updated += 1
@@ -151,14 +119,10 @@ def update_actuals(bars: pd.DataFrame) -> int:
 
 
 def load_history() -> pd.DataFrame:
-    """
-    Load all stored predictions as a DataFrame, ordered by target time.
-    Adds tz-aware Timestamp columns for the three time fields.
-    """
+    """Return all stored predictions ordered by target time."""
     with _conn() as c:
         df = pd.read_sql_query(
-            "SELECT * FROM predictions ORDER BY predicted_for_unix",
-            c,
+            "SELECT * FROM predictions ORDER BY predicted_for_unix", c
         )
 
     if df.empty:

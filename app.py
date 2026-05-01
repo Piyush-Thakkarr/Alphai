@@ -1,15 +1,8 @@
 """
-Live BTC next-hour forecaster dashboard.
-
-When a visitor opens the page:
-    1. Fetches the most recent 500 closed BTCUSDT 1h bars from Binance
-    2. Runs predict_range() on those bars
-    3. Displays:
-         - Backtest headline metrics (coverage, mean width, mean Winkler)
-         - Current price + 95% predicted range for next hour
-         - Last 50 bars chart with the predicted range as a shaded ribbon
-         - Histogram of the 10,000 simulated next-hour prices
-         - Volatility regime tag (sigma-driven)
+streamlit dashboard. on each visit:
+fetch latest 500 bars, run predict_range, show current price + 95%
+range + chart + sample histogram. saves prediction to sqlite for the
+live history section.
 """
 
 from __future__ import annotations
@@ -27,28 +20,25 @@ from data import fetch_klines
 from model import predict_range
 from persistence import init_db, save_prediction, update_actuals, load_history
 
-DASHBOARD_BARS = 500   # brief: "Run your model on the last 500 bars"
-CHART_BARS = 50        # brief: "chart of the last 50 bars"
+DASHBOARD_BARS = 500   # brief says use last 500 bars
+CHART_BARS = 50        # brief says show last 50
 BACKTEST_PATH = Path(__file__).parent / "backtest_results.jsonl"
 
 
-# ---------- helpers ----------
-
 @st.cache_data(ttl=60)
 def load_recent_bars(n: int) -> pd.DataFrame:
-    """Pull recent bars. Cached for 60s so rapid refreshes don't hammer Binance."""
+    # cache 60s so refreshes don't spam binance
     return fetch_klines(limit=n)
 
 
 @st.cache_resource
 def db_initialized() -> bool:
-    """Run init_db() once per Streamlit session, not on every page render."""
+    # run init_db once per session, not every render
     init_db()
     return True
 
 
 def load_backtest_metrics() -> dict | None:
-    """Load and summarize backtest_results.jsonl if present, else None."""
     if not BACKTEST_PATH.exists():
         return None
     rows = [json.loads(line) for line in BACKTEST_PATH.read_text().splitlines() if line.strip()]
@@ -64,11 +54,7 @@ def load_backtest_metrics() -> dict | None:
 
 
 def regime_tag(sigma: float) -> tuple[str, str]:
-    """
-    Human-readable regime label from hourly volatility.
-    Thresholds chosen from typical hourly BTC sigma ranges (calm < 0.3%,
-    moderate 0.3-0.7%, chaotic > 0.7%).
-    """
+    # cutoffs picked from typical btc hourly sigma ranges
     if sigma < 0.003:
         return "Calm", "#1f77b4"
     if sigma < 0.007:
@@ -76,13 +62,11 @@ def regime_tag(sigma: float) -> tuple[str, str]:
     return "Chaotic", "#d62728"
 
 
-# ---------- page ----------
-
 st.set_page_config(page_title="BTC Next-Hour Forecast", layout="wide")
 st.title("BTC Next-Hour 95% Forecast")
 st.caption(
-    "GBM with Garman-Klass + EWMA volatility, Student-t innovations, "
-    "10,000-path Monte Carlo. Walk-forward backtested on the last 30 days."
+    "GBM, garman-klass + EWMA volatility, student-t innovations, "
+    "10k MC. backtested walk-forward on the last 30 days."
 )
 
 # Backtest headline metrics row
@@ -98,22 +82,16 @@ else:
 
 st.divider()
 
-# Live prediction
 try:
-    with st.spinner("Fetching latest bars and running model..."):
+    with st.spinner("fetching latest bars and running model..."):
         bars = load_recent_bars(DASHBOARD_BARS)
-        # Seed the RNG from the latest bar's timestamp so the same
-        # closed-bar window always produces the same prediction. Refreshes
-        # within the same hour give identical numbers; the prediction only
-        # changes when a new bar closes.
+        # seed rng from latest bar timestamp so refreshes in the same
+        # hour give the same prediction (only changes when a new bar closes)
         rng_seed = int(bars.index[-1].value & 0xFFFFFFFF)
         result = predict_range(bars, rng=np.random.default_rng(rng_seed))
 except Exception as exc:
-    st.error(
-        f"Could not fetch live data from Binance or run the model. "
-        f"This usually means a transient network issue or rate-limit. "
-        f"Try refreshing in a few seconds.\n\nDetails: {exc}"
-    )
+    st.error(f"couldn't fetch from binance or run the model. "
+             f"likely a network blip — try refreshing in a few seconds.\n\n{exc}")
     st.stop()
 
 current_price = result["current_price"]
@@ -126,7 +104,6 @@ samples = result["samples"]
 regime, regime_color = regime_tag(sigma)
 last_close_time = bars.index[-1]
 
-# Headline numbers
 left, right = st.columns([2, 1])
 with left:
     st.subheader(f"Forecast for the hour after {last_close_time.strftime('%Y-%m-%d %H:%M UTC')}")
@@ -144,21 +121,18 @@ with right:
 
 st.divider()
 
-# Chart: last 50 bars + ribbon for next-hour range
+# last 50 bars + ribbon for next-hour range
 chart_data = bars.tail(CHART_BARS)
 fig, ax = plt.subplots(figsize=(12, 5))
 ax.plot(chart_data.index, chart_data["close"], color="#1f77b4", linewidth=2, label="Close")
 
-# Shaded ribbon for the next-hour 95% range, plotted at next bar time
 next_bar_time = last_close_time + pd.Timedelta(hours=1)
 ribbon_x = [last_close_time, next_bar_time]
 ax.fill_between(
     ribbon_x, [low, low], [high, high],
     color="orange", alpha=0.30, edgecolor="orange", linewidth=1.2, label="Next-hour 95% range"
 )
-# Dashed reference line at current price across the ribbon: shows where
-# the price would be in 1 hour if nothing moved. Helps visually compare
-# the predicted range to "no change."
+# dotted line at current price = "what if price doesn't move"
 ax.plot(
     [last_close_time, next_bar_time], [current_price, current_price],
     color="black", linewidth=1.0, linestyle=":", label="No-change reference",
@@ -173,7 +147,7 @@ ax.legend(loc="upper left")
 fig.autofmt_xdate()
 st.pyplot(fig)
 
-# Histogram of 10k simulated next-hour outcomes
+# histogram of the 10k simulated next-hour prices
 fig2, ax2 = plt.subplots(figsize=(12, 3))
 ax2.hist(samples, bins=80, color="#1f77b4", alpha=0.7, edgecolor="white")
 ax2.axvline(low, color="red", linestyle="--", linewidth=1.2, label=f"low ${low:,.0f}")
@@ -187,18 +161,19 @@ ax2.grid(alpha=0.3)
 st.pyplot(fig2)
 
 st.caption(
-    "Data: Binance public mirror (data-api.binance.vision). "
-    "Bars are auto-cached for 60 seconds. "
-    f"Latest closed bar: {last_close_time.strftime('%Y-%m-%d %H:%M UTC')}."
+    "data: binance public mirror (data-api.binance.vision). "
+    "bars cached 60s. "
+    f"latest closed bar: {last_close_time.strftime('%Y-%m-%d %H:%M UTC')}."
 )
 
-# ---------- Part C: persistence + live history ----------
+# part C: persistence + live history
 st.divider()
 st.subheader("Live prediction history")
 
 db_initialized()
 
-# Save the current prediction (idempotent: INSERT OR IGNORE on predicted_for_time)
+# INSERT OR IGNORE on predicted_for_unix means refreshes in the same hour
+# don't overwrite the first stored prediction
 predicted_for_time = last_close_time + pd.Timedelta(hours=1)
 made_at = pd.Timestamp.now(tz="UTC")
 inserted = save_prediction(
@@ -214,10 +189,9 @@ inserted = save_prediction(
     made_at=made_at,
 )
 
-# Backfill actuals for any past prediction whose target hour has now closed
+# for any past prediction whose target hour has closed, fill in actual close
 n_resolved = update_actuals(bars)
 
-# Load and display
 history = load_history()
 
 if history.empty:
@@ -236,7 +210,7 @@ else:
     else:
         h4.metric("Live coverage", "—")
 
-    # Timeline chart: predicted ranges + actuals (green hit / red miss)
+    # timeline: blue bars are the stored 95% ranges, green dots = hits, red x = misses
     fig3, ax3 = plt.subplots(figsize=(12, 5))
     for _, row in history.iterrows():
         x = row["predicted_for_time"]

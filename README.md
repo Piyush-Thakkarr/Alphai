@@ -1,54 +1,51 @@
-# BTC Next-Hour 95% Forecast
+# btc next-hour 95% forecast
 
-Predicts a 95% range for the next hour's BTCUSDT close. GBM with
-Garman-Klass volatility, Student-t innovations. Walk-forward backtested
-on the last 30 days of hourly Binance data.
+predicts the 95% range for the next hour's BTCUSDT close. GBM with
+Garman-Klass volatility from OHLC, EWMA smoothing, Student-t innovations.
+walk-forward backtested on the last 30 days of binance hourly bars.
 
-**Live dashboard:** `<paste public URL after Streamlit deploy>`
+live dashboard: `<paste public URL after streamlit deploy>`
 
-## Backtest results
+## numbers from the backtest
 
-| Metric | Value |
-|---|---|
-| Predictions | 720 |
-| **coverage_95** | **0.9514** (target 0.9500) |
-| **mean_winkler_95** | **1,684.01** |
-| mean_width_95 | $1,178 |
+- 720 predictions
+- coverage_95: **0.9556** (target 0.95)
+- mean_winkler_95: **1685.78**
+- mean width: $1,184
 
-## Stack
+re-run with `python backtest.py`. the 30-day window slides forward each
+hour so the numbers drift slightly run-to-run.
 
-| Layer | Choice |
-|---|---|
-| Data | Binance public mirror, BTCUSDT 1h |
-| Per-bar variance | Garman-Klass (OHLC) |
-| Smoothing | EWMA, lambda = 0.97 |
-| Distribution | Student-t, df fitted per window, floor=4 |
-| Drift mu | 0 |
-| Forecast | Monte Carlo, 10,000 paths |
-| Backtest | Walk-forward, 500-bar rolling window |
-| Dashboard | Streamlit + Streamlit Community Cloud |
-| Persistence (Part C) | SQLite |
+## stack
 
-## Files
+- data: binance public mirror (`data-api.binance.vision`), BTCUSDT 1h
+- per-bar variance: garman-klass from O/H/L/C (~7x more efficient than
+  close-to-close stdev)
+- smoothing: EWMA, lambda = 0.97
+- distribution: Student-t, df fitted per window, floored at 4
+- drift mu: 0
+- forecast: monte carlo, 10,000 paths, GBM step
+- backtest: walk-forward, 500-bar rolling window
+- dashboard: streamlit on streamlit community cloud
+- persistence (part C): sqlite
 
-```
-data.py          Binance OHLC fetcher
-model.py         predict_range(): GK + EWMA + Student-t + GBM Monte Carlo
-backtest.py      Walk-forward 720 predictions -> backtest_results.jsonl
-app.py           Streamlit dashboard
-persistence.py   SQLite store
-BUGS.md          Issues found in the provided starter notebook
-```
+## files
 
-`predict_range()` in `model.py` is called by both the backtest and the
-dashboard — same numbers in both places by construction.
+- `data.py` — binance fetcher
+- `model.py` — `predict_range()`. one function, called by both
+  the backtest and the dashboard so they always agree
+- `backtest.py` — walks forward 720 bars, writes
+  `backtest_results.jsonl`
+- `app.py` — the streamlit dashboard
+- `persistence.py` — sqlite for part C
+- `BUGS.md` — stuff i caught while reading the starter
 
-## Run locally
+## running it
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python backtest.py     # writes backtest_results.jsonl + prints metrics
-streamlit run app.py   # serves the dashboard at localhost:8501
+python backtest.py
+streamlit run app.py
 ```
