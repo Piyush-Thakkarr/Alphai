@@ -58,16 +58,32 @@ def theoretical_option_price(S0, K, T, r, paths, option_type, is_cyber=True):
     ...
 ```
 
-**repro**: call the function with `is_cyber=False`. e.g.
+**repro**: extracted the function verbatim and called with is_cyber=False.
+
 ```python
-theoretical_option_price(S0, K_call, T, r, paths_options, 'call', is_cyber=False)
+import numpy as np
+
+def theoretical_option_price(S0, K, T, r, paths, option_type, is_cyber=True):
+    t_index = int(T * 252)
+    if is_cyber:
+        ST = paths[:, t_index]
+    else:
+        ST = S0 * np.exp((r - 0.5*sigma**2)*T + sigma*np.sqrt(T)*np.random.randn(len(paths)))
+    ...
+
+theoretical_option_price(1.0, 1.0, 0.1, 0.05, np.zeros((100,100)),
+                         'call', is_cyber=False)
 ```
 
-**expected**: a price computed with the lognormal-normal closed-form.
+**expected**: a price.
 
-**actual**: `NameError: name 'sigma' is not defined`. neither the
-function arguments nor the surrounding module scope defines a bare
-`sigma` (only `sigma_fig`, `sigma_bt`, `sigma2` exist).
+**actual** (just ran it):
+```
+NameError: name 'sigma' is not defined
+```
+
+neither the function arguments nor the surrounding module scope defines
+a bare `sigma` (only `sigma_fig`, `sigma_bt`, `sigma2` exist).
 
 **impact**: dormant. nothing in the notebook calls this branch (every
 caller uses the default `is_cyber=True`). still a real latent bug.
@@ -92,19 +108,34 @@ def fetch_market_options_data(symbol, expiration_date):
     return pd.DataFrame(data)
 ```
 
-**repro**: call the function with any symbol / expiration:
+**repro**: extracted the function and called it with two totally
+different (symbol, expiration_date) pairs under the same RNG seed.
+
 ```python
-fetch_market_options_data('BTCUSDT', '2026-12-01')
-fetch_market_options_data('XYZ', 'never')
+np.random.seed(0)
+df_btc = fetch_market_options_data('BTCUSDT', '2026-12-01')
+np.random.seed(0)
+df_xyz = fetch_market_options_data('UTTER_NONSENSE', 'never')
 ```
 
-**expected**: market option chain pulled from somewhere. the name
-implies an external fetch.
+**expected** (if the function actually fetched market data): different
+prices for different symbols / expirations.
 
-**actual**:
-- the function does not make any network call
-- it returns synthetic data: `theoretical_call * (0.9 + 0.2 * uniform)`
-- both arguments `symbol` and `expiration_date` are ignored entirely
+**actual** (just ran it):
+```
+Test 1 - synthetic data check:
+  call_price range: [4.520, 5.464]
+  observed: prices stay in 4.500-5.500 range (90-110% of theoretical_call=5.0)
+
+Test 2 - arguments ignored check:
+  same RNG seed, totally different (symbol, expiration_date) args
+  observed: dataframes identical? True
+```
+
+confirmed: prices are bounded to 90-110% of the model's own theoretical
+price (not real market behavior), and the function returns IDENTICAL
+output for completely different symbols / expirations. it does not make
+any network call.
 
 **downstream impact**: the notebook prints a "BUY / SELL / HOLD" trading
 recommendation by comparing model price to this fake "market" price.
@@ -183,12 +214,31 @@ def backtest_confidence_intervals(prices, train=504, test=252):
         paths_bt = simulate_mc(..., n_sims=10_000, n_days=1)   # 10k MC each iter
 ```
 
-**repro**: re-run the backtest and inspect per-iteration random draws.
+**repro**: simulate the starter's RNG pattern and try to reproduce
+"iteration 137" in isolation.
 
-**expected**: each iteration is independently reproducible (the
-canonical pattern for Monte Carlo backtests).
+```python
+# scenario 1: full backtest from seeded start
+np.random.seed(42)
+all_iters = [np.random.standard_t(5) for _ in range(252)]
+iter_137_in_full = all_iters[137]
 
-**actual**: 252 iterations x 10,000 MC paths = 2,520,000 calls to
+# scenario 2: re-seed and try to re-run "just iteration 137"
+np.random.seed(42)
+iter_137_solo = np.random.standard_t(5)
+```
+
+**expected** (if iterations were independently reproducible): both
+values equal.
+
+**actual** (just ran it):
+```
+iter 137 inside the full run:  -0.088310
+iter  0  if we re-seed alone:  +0.559634
+different? True
+```
+
+252 iterations x 10,000 MC paths = 2,520,000 calls to
 `np.random.standard_t` all sharing the same global RNG state. the script
 is reproducible end-to-end (same seed, same total output) but a single
 iteration cannot be reproduced in isolation. this hides bugs: if
@@ -196,7 +246,7 @@ iteration 137 produces weird coverage, you can't re-run just iteration
 137 to debug.
 
 **fix in our submission**: pass an explicit `np.random.default_rng(42)`
-instance through the call chain.
+instance through the call chain (see `backtest.py`).
 
 ---
 
