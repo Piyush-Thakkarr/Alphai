@@ -8,3 +8,9 @@ __pycache__/
 .claude/
 .idea/
 .vscode/
+
+# Private notes (interview prep, scratchpad). Never commit.
+NOTES.md
+notes/
+*.private.md
+
