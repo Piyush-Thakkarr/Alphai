@@ -10,8 +10,8 @@ live dashboard: `<paste public URL after streamlit deploy>`
 
 - 720 predictions
 - coverage_95: **0.9556** (target 0.95)
-- mean_winkler_95: **1685.78**
-- mean width: $1,184
+- mean_winkler_95: **1702.85**
+- mean width: $1,197
 
 re-run with `python backtest.py`. the 30-day window slides forward each
 hour so the numbers drift slightly run-to-run.

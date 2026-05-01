@@ -5,12 +5,10 @@ __pycache__/
 *.sqlite
 .DS_Store
 .streamlit/secrets.toml
-.claude/
 .idea/
 .vscode/
 
-# Private notes (interview prep, scratchpad). Never commit.
+# private notes / scratchpad — never commit
 NOTES.md
 notes/
 *.private.md
-
