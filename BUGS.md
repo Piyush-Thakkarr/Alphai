@@ -5,7 +5,7 @@ behavior, and what actually happens.
 
 ---
 
-## 1. dead EODHD api token (HARD BUG, blocks the whole notebook)
+## 1. EODHD api token: blocks the notebook (saved trace = 401, today = free-tier limited)
 
 **where**: cell 2, lines defining the data fetch
 
@@ -18,28 +18,49 @@ start_date= (datetime.now() - timedelta(days=365*10)).strftime('%Y-%m-%d')
 prices    = get_daily_data(symbol, start_date, end_date, api_token)
 ```
 
-**repro**: open the notebook, run cell 2 as-is.
-
-**expected**: `prices` populated with 10 years of USDCHF daily closes.
-
-**actual** (visible in the saved notebook output):
+**state when the notebook was saved** (visible in the saved cell output):
 ```
 RuntimeError: Erreur 401
 ---------------------------------------------------------------
 RuntimeError                              Traceback (most recent call last)
 /tmp/ipython-input-3150741174.py in <cell line: 0>()
-     27 end_date  = datetime.now().strftime('%Y-%m-%d')
-     28 start_date= (datetime.now() - timedelta(days=365*10)).strftime('%Y-%m-%d')
 ---> 29 prices    = get_daily_data(symbol, start_date, end_date, api_token)
 ...
 RuntimeError: Erreur 401
 ```
 
-EODHD rejects the token (likely expired / over quota / never refreshed
-since the notebook was authored). Anyone running the starter as-is is
-blocked at the very first step.
+**state today** (just verified by hitting the endpoint with that token):
+```
+$ curl -s -o /dev/null -w "HTTP %{http_code}\n" \
+    "https://eodhd.com/api/eod/USDCHF.FOREX?api_token=68efdceed38ec8.15967744&from=2020-01-01&to=2020-12-31&fmt=json"
+HTTP 200
+```
 
-**impact**: the entire notebook below this cell never executes.
+but the body is:
+```json
+[{"date":"2025-05-01","open":0.8243,"high":0.8332,"low":0.824,"close":0.8295,
+  "adjusted_close":0.8295,"volume":0,
+  "warning":"Data is limited by one year as you have free subscription"}]
+```
+
+so today the token authenticates but the free-tier returns only one
+row (current day) instead of 10 years of history. the starter expects
+10 years.
+
+**downstream impact today**: the starter's `get_daily_data` succeeds and
+sets `prices` to a Series with 1 row. then:
+```python
+log_ret = np.log(prices / prices.shift(1)).dropna()   # empty, 0 rows
+am = arch_model(log_ret * 100, vol='FIGARCH', ...)     # crashes on empty data
+```
+
+so the notebook still fails to run end-to-end, just at a different
+point than the saved 401. either way, anyone running the starter as-is
+is blocked from getting a working result.
+
+**fix in our submission**: replaced EODHD entirely with the binance
+public mirror as the brief intends (different vendor, different
+schema, different time grain).
 
 ---
 
@@ -333,7 +354,7 @@ def simulate_cyber_gbm(...):
 
 ---
 
-## 9. ~150 lines of off-topic options pricing
+## 9. 150 lines of off-topic options pricing
 
 **where**: cell 3 (the entire third cell)
 
@@ -346,11 +367,18 @@ def simulate_cyber_gbm(...):
 - a French print block titled "STRATEGIE OPTIONS POUR USDCHF.FOREX"
 - `plot_option_strategy()` final chart
 
+**measured size** (from the .ipynb cell-by-cell line count):
+```
+cell 1: 1 source line   (just `pip install arch`)
+cell 2: 209 source lines (data fetch + model + backtest, the actual stuff)
+cell 3: 150 source lines (the options block)
+```
+
 **why this is a bug for this assignment**: the AlphaI assignment is to
 predict a 95% interval for BTC's next-hour close. options strikes,
 greeks, strangle prices, and BUY/SELL/HOLD recommendations are not
-asked for, not graded, and add ~150 lines of noise to the file. this is
-~30% of the entire starter.
+asked for, not graded, and add 150 lines (42% of the substantive code)
+of pure noise.
 
 **fix in our submission**: removed entirely. cell 3 contributes nothing
 to the assignment deliverable.
