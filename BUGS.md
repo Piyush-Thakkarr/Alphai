@@ -26,7 +26,8 @@ things that just don't run
    downstream prints a recommendation of "BUY" / "SELL" / "HOLD" the
    strangle based on this fake "market" price. the recommendation is
    meaningless because it's the model arguing with random noise around
-   itself.
+   itself. also: the function takes `symbol` and `expiration_date` as
+   arguments but never references either of them in the body.
 
 stuff the brief got wrong
 
@@ -60,7 +61,10 @@ design choices that don't fit a 1-hour-ahead forecast
 
    - rolling shannon entropy of residuals
    - a `crisis` flag = `(H_val > 0.8) or (M_val > 0.8)`
-   - a "redundancy" multiplier from a 5-vs-20-bar variance ratio
+   - a "redundancy" multiplier from a 5-vs-20-bar variance ratio of
+     *raw prices* (should be returns - variance of raw prices is
+     dominated by the trend, not the volatility, so this multiplier is
+     effectively a trendiness indicator, not a vol ratio)
    - an `info_filter` binary flag from entropy mean
    - `update_params` running an online learning loop on `gamma` during
      each simulation
@@ -68,7 +72,7 @@ design choices that don't fit a 1-hour-ahead forecast
      eta=1e-3, with no justification anywhere in the notebook
 
    none of this is in any standard volatility textbook. the brief itself
-   says "everything else in the starter is plumbing — focus on the three
+   says "everything else in the starter is plumbing - focus on the three
    concepts" so i read that as license to strip the layer.
 
 9. the whole third cell (~150 lines) computes options strikes, greeks,
