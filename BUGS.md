@@ -39,6 +39,8 @@ stuff the brief got wrong
    whole point of the assignment for me, not a default i could just
    inherit.
 
+reproducibility / hygiene
+
 6. `np.random.seed(42)` set once globally before a 252-iteration MC
    backtest loop. all 252 iterations share evolving RNG state. it's
    reproducible end-to-end but you can't reproduce a single iteration
