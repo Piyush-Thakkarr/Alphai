@@ -5,3 +5,4 @@ scipy>=1.10
 streamlit>=1.30
 matplotlib>=3.7
 tqdm>=4.60
+arch>=6.0
