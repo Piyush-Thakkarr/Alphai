@@ -91,7 +91,7 @@ try:
         result = predict_range(bars, rng=np.random.default_rng(rng_seed))
 except Exception as exc:
     st.error(f"couldn't fetch from binance or run the model. "
-             f"likely a network blip — try refreshing in a few seconds.\n\n{exc}")
+             f"likely a network blip, try refreshing in a few seconds.\n\n{exc}")
     st.stop()
 
 current_price = result["current_price"]
@@ -208,7 +208,7 @@ else:
         live_cov = float(resolved["in_range"].mean())
         h4.metric("Live coverage", f"{live_cov:.4f}", help="in_range / resolved")
     else:
-        h4.metric("Live coverage", "—")
+        h4.metric("Live coverage", "n/a")
 
     # timeline: blue bars are the stored 95% ranges, green dots = hits, red x = misses
     fig3, ax3 = plt.subplots(figsize=(12, 5))

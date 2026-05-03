@@ -86,7 +86,7 @@ def predict_range(
     gk = garman_klass_per_bar(ohlc)
     sigma = ewma_sigma(gk)
 
-    # fit df on this window's returns (no peeking — uses input only)
+    # fit df on this window's returns (no peeking, uses input only)
     df_t = fit_student_t_df(ohlc["close"])
 
     # GBM step under mu=0:

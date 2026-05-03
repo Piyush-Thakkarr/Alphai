@@ -4,7 +4,7 @@ sqlite store for the dashboard's part C history.
 every visit saves the prediction and back-fills actuals for any
 prediction whose target hour has now closed. INSERT OR IGNORE on
 predicted_for_unix means the FIRST prediction made for a given hour
-is the one we keep — repeat refreshes don't overwrite it.
+is the one we keep, repeat refreshes don't overwrite it.
 """
 
 from __future__ import annotations
