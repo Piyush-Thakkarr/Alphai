@@ -23,6 +23,9 @@ EWMA_LAMBDA = 0.97   # half-life ~23 bars
 DF_FLOOR = 4.0       # df>4 keeps kurtosis finite
 N_SIMS = 10_000
 
+# precomputed: appears in the GK formula's second term
+_GK_C = 2.0 * np.log(2.0) - 1.0   # ~0.3863
+
 
 def garman_klass_per_bar(ohlc: pd.DataFrame) -> pd.Series:
     """
@@ -33,7 +36,7 @@ def garman_klass_per_bar(ohlc: pd.DataFrame) -> pd.Series:
     """
     log_hl = np.log(ohlc["high"] / ohlc["low"])
     log_co = np.log(ohlc["close"] / ohlc["open"])
-    return 0.5 * log_hl**2 - (2.0 * np.log(2.0) - 1.0) * log_co**2
+    return 0.5 * log_hl**2 - _GK_C * log_co**2
 
 
 def ewma_sigma(gk_series: pd.Series, lam: float = EWMA_LAMBDA) -> float:

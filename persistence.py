@@ -92,9 +92,7 @@ def update_actuals(bars: pd.DataFrame) -> int:
     if bars.empty:
         return 0
 
-    bars = bars.copy()
-    bars["unix"] = bars.index.map(_to_unix)
-    close_by_unix = dict(zip(bars["unix"], bars["close"]))
+    close_by_unix = {_to_unix(ts): float(c) for ts, c in bars["close"].items()}
 
     updated = 0
     with _conn() as c:

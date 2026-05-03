@@ -176,7 +176,7 @@ db_initialized()
 # don't overwrite the first stored prediction
 predicted_for_time = last_close_time + pd.Timedelta(hours=1)
 made_at = pd.Timestamp.now(tz="UTC")
-inserted = save_prediction(
+save_prediction(
     {
         "current_price": current_price,
         "low": low,
@@ -190,7 +190,7 @@ inserted = save_prediction(
 )
 
 # for any past prediction whose target hour has closed, fill in actual close
-n_resolved = update_actuals(bars)
+update_actuals(bars)
 
 history = load_history()
 
@@ -198,12 +198,12 @@ if history.empty:
     st.info("No predictions stored yet. This is the first visit.")
 else:
     resolved = history.dropna(subset=["actual_close"])
-    pending = history[history["actual_close"].isna()]
+    n_pending = int(history["actual_close"].isna().sum())
 
     h1, h2, h3, h4 = st.columns(4)
     h1.metric("Predictions stored", f"{len(history)}")
     h2.metric("Resolved", f"{len(resolved)}")
-    h3.metric("Pending (waiting on bar close)", f"{len(pending)}")
+    h3.metric("Pending (waiting on bar close)", f"{n_pending}")
     if len(resolved) > 0:
         live_cov = float(resolved["in_range"].mean())
         h4.metric("Live coverage", f"{live_cov:.4f}", help="in_range / resolved")
